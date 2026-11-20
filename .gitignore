@@ -1,0 +1,17 @@
+# Build (PyInstaller)
+build/
+dist/
+*.spec
+AirPodsSwitch.ico
+
+# Python
+__pycache__/
+*.pyc
+
+# Lokální data aplikace (vytvoří se při běhu)
+config.json
+*.log
+*.log.*
+
+# Pracovní soubory
+test

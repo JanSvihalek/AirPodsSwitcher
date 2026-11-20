@@ -1,0 +1,10 @@
+pystray
+pillow
+# jen pro zobrazení baterie AirPods (bez nich aplikace funguje dál)
+winrt-runtime
+winrt-Windows.Devices.Bluetooth.Advertisement
+winrt-Windows.Foundation
+winrt-Windows.Foundation.Collections
+winrt-Windows.Storage.Streams
+# build do jednoho .exe
+pyinstaller
