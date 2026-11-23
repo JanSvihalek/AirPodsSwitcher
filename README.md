@@ -14,6 +14,7 @@ od PC, iPhone si je za pár sekund sám převezme. Připojení zpět k PC spouš
 | Které sluchátka jsou u PC / výběr | v okně klik na jméno v hlavičce (rozbalí seznam se stavem), nebo menu *Sluchátka* |
 | Spouštění s Windows | přepínač v okně nebo menu *Spouštět s Windows* (obojí je synchronní) |
 | Připojit po odemčení PC | přepínač v okně nebo menu – po odemčení (Win+L), přihlášení nebo probuzení se vybraná sluchátka připojí k PC |
+| Pozastavit média při přepnutí | přepínač v okně nebo menu – před přepnutím na iPhone pozastaví, co na PC hraje, po připojení zpět to zase spustí (viz níže) |
 | Změna klávesové zkratky | v okně klik na odznak se zkratkou a stisk nové kombinace (Esc = zrušit) |
 | Baterie AirPods | v okně pod jménem sluchátek – ikony baterie L / P / pouzdro (zelená, ≤ 30 % oranžová, ≤ 10 % červená, blesk = nabíjí), když jsou sluchátka vyndaná nebo pouzdro otevřené |
 | Obnovit audio služby | menu – zapne audio služby u všech sluchátek (viz níže) |
@@ -39,6 +40,19 @@ Po odemčení počká ~4 s, po probuzení ~8 s (BT se rozjíždí) a připojí v
 Když jsou v pouzdře nebo mimo dosah, nic nehlásí (jen do logu). Když se aplikace
 spustí do 5 minut od startu Windows (autostart), bere se to jako přihlášení.
 
+### Média
+
+Před odpojením od PC aplikace pozastaví všechno, co na PC hraje (Spotify, YouTube
+v prohlížeči, …), aby zvuk nepřeskočil do reproduktorů. Po připojení zpět
+(zkratkou, z okna, z menu i po odemčení) spustí znovu jen to, co sama pozastavila
+a co je pořád pozastavené. Co mezitím spustíš nebo zavřeš ručně, nechá být.
+Když se odpojení nepovede, média se hned zase spustí.
+
+Funguje pro aplikace, které se ukazují v panelu médií Windows (u hlasitosti);
+modul `media.py`, balíček `winrt-Windows.Media.Control`. Média se ovládají jen
+při přepnutí přes aplikaci. Když si sluchátka iPhone vezme sám nebo je dáš
+do pouzdra, aplikace média nepozastaví.
+
 ### Baterie
 
 AirPods vysílají stav baterie v Bluetooth LE reklamách Applu (typ „proximity pairing“);
@@ -53,7 +67,8 @@ Bez balíčků `winrt-*` se baterie prostě nezobrazuje.
 {
   "device_name": "AirPods 4",
   "hotkey": "ctrl+alt+b",
-  "auto_connect": false
+  "auto_connect": false,
+  "pause_media": true
 }
 ```
 
@@ -65,6 +80,8 @@ Bez balíčků `winrt-*` se baterie prostě nezobrazuje.
 - `hotkey` – modifikátory `ctrl`, `alt`, `shift`, `win` + jedna klávesa (`a`–`z`, `0`–`9`,
   `f1`–`f24`, `space`, `pause`, `home`, …). Např. `ctrl+shift+f9`. Jde měnit i v okně.
 - `auto_connect` – `true` = připojit sluchátka po odemčení/probuzení PC (přepínač v okně).
+- `pause_media` – `true` (výchozí) = při přepnutí na iPhone pozastavit média na PC a po návratu
+  je spustit (přepínač v okně).
 - `fast_disconnect` – `true` (výchozí) = při odpojení nejdřív shodit BT spojení a audio služby
   vypnout až potom, takže iPhone dostane sluchátka asi o 3 s dřív. `false` = původní pořadí
   (nejdřív služby, pak spojení). Když se při `true` sluchátka občas vrátí k PC, přepni na `false`.
@@ -88,7 +105,7 @@ Potřeba: Python 3 a balíčky z `requirements.txt`:
 python -m pip install -r requirements.txt
 ```
 
-(`winrt-*` jsou jen pro zobrazení baterie AirPods; bez nich aplikace funguje dál.)
+(`winrt-*` jsou jen pro zobrazení baterie AirPods a ovládání médií; bez nich aplikace funguje dál.)
 
 Build (ve složce projektu):
 
@@ -156,4 +173,6 @@ python bt_airpods.py status AirPods        # stav včetně audio služeb
 python bt_airpods.py on|off|toggle AirPods
 python bt_airpods.py watch AirPods 30      # 30 s sleduje změny stavu
 python bt_airpods.py diag AirPods          # nalezené audio (KS) filtry
+python media.py list                       # mediální relace (co hraje) a jejich stav
+python media.py cycle 5                    # pozastavit, 5 s počkat, spustit
 ```

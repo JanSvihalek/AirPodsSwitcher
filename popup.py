@@ -93,7 +93,9 @@ def layout(view):
         switch_row=(24, 282 + dy, 336, 312 + dy),
         auto=(296, 328 + dy, 336, 350 + dy),
         auto_row=(24, 324 + dy, 336, 354 + dy),
-        height=CARD_H + 42 + dy,
+        media=(296, 370 + dy, 336, 392 + dy),
+        media_row=(24, 366 + dy, 336, 396 + dy),
+        height=CARD_H + 84 + dy,
     )
     return L
 
@@ -402,7 +404,7 @@ def render_card(view, scale):
     dv = L["divider_y"]
     d.rectangle(R((24, dv, 336, dv + 1)), fill=DIVIDER)
 
-    # Přepínače: autostart a připojení po odemčení
+    # Přepínače: autostart, připojení po odemčení, pozastavení médií
     def switch(r, on):
         d.rounded_rectangle(R(r), radius=11 * k, fill=SWITCH_ON if on else SWITCH_OFF)
         kx = r[2] - 3 - 16 if on else r[0] + 3
@@ -410,6 +412,7 @@ def render_card(view, scale):
     sw = L["switch"]
     switch(sw, view["autostart"])
     switch(L["auto"], view.get("auto_connect", False))
+    switch(L["media"], view.get("pause_media", False))
 
     img = big.resize((W, H), Image.LANCZOS)
 
@@ -473,6 +476,9 @@ def render_card(view, scale):
     t.text(S(24, (sw[1] + sw[3]) / 2), "Spouštět s Windows", font=f_row, fill=TEXT2, anchor="lm")
     a = L["auto"]
     t.text(S(24, (a[1] + a[3]) / 2), "Připojit po odemčení PC", font=f_row, fill=TEXT2, anchor="lm")
+    m = L["media"]
+    t.text(S(24, (m[1] + m[3]) / 2), "Pozastavit média při přepnutí", font=f_row,
+           fill=TEXT2, anchor="lm")
     return img, L
 
 
@@ -510,6 +516,7 @@ class Popup:
       toggle_autostart() -> přepne autostart
       select_device(jm)  -> vybere sluchátka
       toggle_auto_connect()            -> přepne připojení po odemčení
+      toggle_pause_media()             -> přepne pozastavení médií
       begin_hotkey_capture()           -> dočasně uvolní globální zkratku
       end_hotkey_capture(text|None)    -> uloží novou / vrátí starou; vrací chybu
     """
@@ -650,6 +657,8 @@ class Popup:
             return ("switch", None)
         if _inside(L["auto_row"], x, y):
             return ("auto", None)
+        if _inside(L["media_row"], x, y):
+            return ("media", None)
         return None
 
     def _on_click(self, e):
@@ -668,6 +677,8 @@ class Popup:
             self.model.toggle_autostart()
         elif what == "auto":
             self.model.toggle_auto_connect()
+        elif what == "media":
+            self.model.toggle_pause_media()
         elif what == "badge":
             if self.capturing:
                 self._end_capture(None)

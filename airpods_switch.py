@@ -32,6 +32,7 @@ DEFAULT_CONFIG = {
     "hotkey": "ctrl+alt+b",     # globální klávesová zkratka
     "auto_connect": False,      # připojit sluchátka po odemčení / probuzení PC
     "fast_disconnect": True,    # pokus: při odpojení nejdřív shodit spojení, služby až pak
+    "pause_media": True,        # při přepnutí na iPhone pozastavit média, po návratu spustit
 }
 
 
@@ -427,10 +428,15 @@ class Switcher:
     (provede se, jakmile vypínání doběhne).
     """
 
-    def __init__(self, device_name, on_result, method="full"):
+    def __init__(self, device_name, on_result, method="full",
+                 before_disconnect=None, after_connect=None):
         self.device_name = device_name
         self.on_result = on_result
         self.method = method        # "full" nebo "fast" (viz bt_airpods.disconnect)
+        # Volá se (ve worker vlákně) těsně před odpojením od PC a po úspěšném
+        # připojení / nepovedeném odpojení – pozastavení a obnovení médií
+        self.before_disconnect = before_disconnect
+        self.after_connect = after_connect
         self._lock = threading.Lock()
         self._background = False    # dovypínání služeb po už oznámeném odpojení
         self._pending = None        # (what, job) čekající na dokončení pozadí
@@ -472,23 +478,49 @@ class Switcher:
         except Exception:
             log.exception("Chyba v on_result")
 
+    @staticmethod
+    def _hook(fn):
+        if fn is None:
+            return
+        try:
+            fn()
+        except Exception:   # chyba v pozastavení médií nesmí zastavit přepnutí
+            log.exception("Chyba v háčku přepínání")
+
+    def _connect(self):
+        ok = bt.connect(self.device_name, self.method)
+        if ok:
+            self._hook(self.after_connect)
+        return ok
+
+    def _disconnect(self, what):
+        self._hook(self.before_disconnect)
+        ok = False
+        try:
+            ok = bt.disconnect(self.device_name, self.method,
+                               on_released=lambda: self._released(what))
+        finally:
+            if not ok:      # sluchátka zůstala u PC -> pustit média zpátky
+                self._hook(self.after_connect)
+        return ok
+
     def _do(self, what):
         """Provede akci; vrací (výsledek, potvrzeno, už_bylo_hotovo)."""
         name = self.device_name
-        released = lambda: self._released(what)
         if what in ("connect", "auto-connect"):
-            already = bt.is_connected(name)
-            return "connected", already or bt.connect(name, self.method), already
+            if bt.is_connected(name):
+                return "connected", True, True
+            return "connected", self._connect(), False
         if what == "disconnect":
             # Hotovo je až ve chvíli, kdy neběží ani BT spojení – AirPods
             # jinak zůstávají přes AAP u PC a iPhone si je nevezme.
-            already = not bt.find_device(name).fConnected
-            return ("disconnected",
-                    already or bt.disconnect(name, self.method, on_released=released), already)
+            if not bt.find_device(name).fConnected:
+                return "disconnected", True, True
+            return "disconnected", self._disconnect(what), False
         # toggle
         if bt.is_connected(name):
-            return "disconnected", bt.disconnect(name, self.method, on_released=released), False
-        return "connected", bt.connect(name, self.method), False
+            return "disconnected", self._disconnect(what), False
+        return "connected", self._connect(), False
 
     def _run(self, what, job=None):
         ok, text, already = False, "Neznámá chyba", False
@@ -540,6 +572,9 @@ class Switcher:
 # --------------------------------------------------------------------------
 
 POLL_INTERVAL = 3.0  # s, jak často se zjišťuje stav na pozadí
+# s – po připojení chvíli počkat, než Windows přepnou výchozí zvukové
+# zařízení na sluchátka, jinak by se média rozehrála do reproduktorů
+RESUME_DELAY = 2.0
 
 # Barvy ikony podle stavu
 STATE_COLORS = {
@@ -603,6 +638,7 @@ class TrayApp:
         import queue
         from popup import Popup
         from battery import BatteryMonitor
+        from media import MediaController
 
         self.root = root
         self.cfg, self.cfg_error = load_config()
@@ -618,8 +654,11 @@ class TrayApp:
         self._menu_lock = threading.Lock()
         self.stop_event = threading.Event()
         self._ui_queue = queue.Queue()
+        self.media = MediaController()
         self.switcher = Switcher(self.device, self.on_result,
-                                 "fast" if self.cfg["fast_disconnect"] else "full")
+                                 "fast" if self.cfg["fast_disconnect"] else "full",
+                                 before_disconnect=self._pause_media,
+                                 after_connect=self._resume_media)
         self.hotkey = HotkeyListener(self.cfg["hotkey"], self.on_hotkey)
         self.session = SessionWatcher(self.on_session_event)
         self.battery = BatteryMonitor()
@@ -640,6 +679,8 @@ class TrayApp:
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Připojit po odemčení PC", self.on_auto_connect,
                              checked=lambda item: self.cfg["auto_connect"]),
+            pystray.MenuItem("Pozastavit média při přepnutí", self.on_pause_media,
+                             checked=lambda item: self.cfg["pause_media"]),
             pystray.MenuItem("Spouštět s Windows", self.on_autostart,
                              checked=lambda item: autostart_enabled()),
             pystray.MenuItem("Obnovit audio služby", self.on_restore_services),
@@ -685,6 +726,7 @@ class TrayApp:
             "busy": self.switcher.busy,
             "autostart": autostart_enabled(),
             "auto_connect": self.cfg["auto_connect"],
+            "pause_media": self.cfg["pause_media"],
             "hotkey": hotkey_label(self.cfg["hotkey"]),
             "battery": self.battery_items(),
         }
@@ -705,6 +747,9 @@ class TrayApp:
 
     def toggle_auto_connect(self):
         self.on_auto_connect()
+
+    def toggle_pause_media(self):
+        self.on_pause_media()
 
     # --- změna klávesové zkratky z okna (volá se z tk vlákna) ---------------
 
@@ -937,6 +982,31 @@ class TrayApp:
         self.update_menu()
         self.ui_call(self.popup.refresh)
 
+    def on_pause_media(self, icon=None, item=None):
+        value = not self.cfg["pause_media"]
+        self.cfg["pause_media"] = value
+        try:
+            save_config_value("pause_media", value)
+        except OSError as e:
+            self.notify(f"Nastavení nejde uložit do config.json: {e}", f"{self.title} – chyba")
+        log.info("Pozastavení médií: %s", "zapnuto" if value else "vypnuto")
+        self.update_menu()
+        self.ui_call(self.popup.refresh)
+
+    # --- média (volá worker vlákno Switcheru) ------------------------------
+
+    def _pause_media(self):
+        """Před odpojením od PC: pozastavit, co hraje (ať zvuk nepřeskočí
+        do reproduktorů)."""
+        if self.cfg["pause_media"]:
+            self.media.pause_all()
+
+    def _resume_media(self):
+        """Po připojení k PC: spustit, co jsme pozastavili. Obnoví se
+        i po vypnutí volby – pozastavené relace by jinak zůstaly viset."""
+        if self.media.has_paused:
+            threading.Timer(RESUME_DELAY, self.media.resume).start()
+
     def on_restore_services(self, icon=None, item=None):
         def job():
             restored = bt.restore_audio_services()
@@ -1046,12 +1116,14 @@ def run_preview(out_path, state):
                     "busy": state == "busy", "autostart": state != "disconnected",
                     "hotkey": hotkey_label(DEFAULT_CONFIG["hotkey"]),
                     "auto_connect": state == "connected",
+                    "pause_media": True,
                     "battery": () if state == "error" else
                                (("L", 60, False), ("P", 20, False), ("Pouzdro", 10, True))}
         def toggle(self): pass
         def toggle_autostart(self): pass
         def select_device(self, name): pass
         def toggle_auto_connect(self): pass
+        def toggle_pause_media(self): pass
         def begin_hotkey_capture(self): pass
         def end_hotkey_capture(self, text): return None
 
